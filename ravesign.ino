@@ -1,5 +1,4 @@
 #include <ESP8266WiFi.h>
-#include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 
 #include <Adafruit_GFX.h>
@@ -7,20 +6,23 @@
 #include <Adafruit_NeoMatrix.h>
 
 #define PIN 3
-#define MATRIX_WIDTH 128
+#define MATRIX_WIDTH 64
 #define MATRIX_HEIGHT 8
+
+#define CHAR_WIDTH 6
+#define MATRIX_TEXT_WIDTH ((MATRIX_WIDTH / CHAR_WIDTH) + 1)
 
 #define MAX_BRIGHT 0.2
 
-#define MIN_SHOW_DELAY 5
+#define MIN_SHOW_DELAY 50
 
 #define MIN_COMET_LENGTH 4
 #define MAX_COMET_LENGTH 8
-#define MIN_COMET_DELAY 5
-#define MAX_COMET_DELAY 50
-#define NUM_COMETS 10
+#define MIN_COMET_DELAY 50
+#define MAX_COMET_DELAY 100
+#define MAX_NUM_COMETS 10
 
-#define NUM_LIGHTS 50
+#define MAX_NUM_LIGHTS 50
 #define MIN_UPDATE_DELAY 10
 #define MAX_UPDATE_DELAY 20
 #define FLASH_UPDATE_DELAY 100
@@ -44,7 +46,7 @@ typedef struct Comet {
   int xdir;
   int ydir;
   int length;
-  int next_update;
+  unsigned long next_update;
   int delay;
   Pixel body[MAX_COMET_LENGTH];
 } Comet;
@@ -87,7 +89,9 @@ Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix( MATRIX_WIDTH, MATRIX_HEIGHT, PIN
  * --------------------------------------------------------------------------------
  */
 
+boolean enabled = false;
 boolean show_needed = false;
+boolean changed_mode = false;
 unsigned long cur_time = 0;
 unsigned long next_show = 0;
 int programMode = 1;
@@ -164,9 +168,11 @@ uint16_t HsvToRgb( HsvColor in )
  * --------------------------------------------------------------------------------
  */
 
+int numComets = MAX_NUM_COMETS;
+
 unsigned long nextCometUpdate;
 
-Comet comet[NUM_COMETS];
+Comet comet[MAX_NUM_COMETS];
 
 boolean row_used[MATRIX_HEIGHT];
 boolean col_used[MATRIX_WIDTH];
@@ -199,9 +205,7 @@ void init_comet( int cnum, double hue, int xstart, int ystart, int xdir, int ydi
 
     if( i == 0 ) {
       comet[cnum].body[i].c = 0;
-      
     } else {
-
       hsvcolor.h = hue;
       hsvcolor.s = 1.0;
       hsvcolor.v = MAX_BRIGHT - (MAX_BRIGHT * ((double)length - (double)i) / (double)length);
@@ -218,7 +222,7 @@ void init_comet( int cnum, double hue, int xstart, int ystart, int xdir, int ydi
 
 void gen_comet( int cnum ) {
   double hue = randomDouble( 0.0, 360.0 );
-  int length = random( MIN_COMET_LENGTH, MAX_COMET_LENGTH );
+  int length = random( MIN_COMET_LENGTH, MAX_COMET_LENGTH -1 );
   int delay = random( MIN_COMET_DELAY, MAX_COMET_DELAY );
   int type, xstart, ystart;
   boolean good = false;
@@ -270,7 +274,7 @@ void gen_all_comets() {
     col_used[x] = false;
   }
   
-  for( int cnum = 0; cnum < NUM_COMETS; cnum++ ) {
+  for( int cnum = 0; cnum < numComets; cnum++ ) {
     gen_comet( cnum );
   }
 
@@ -278,7 +282,7 @@ void gen_all_comets() {
 }
 
 void move_comet( int cnum ) {
-  
+   
   for( int i = 0; i < comet[cnum].length - 1; i++ ) {
     comet[cnum].body[i].x = comet[cnum].body[i+1].x;
     comet[cnum].body[i].y = comet[cnum].body[i+1].y;
@@ -290,16 +294,22 @@ void move_comet( int cnum ) {
 }
 
 void draw_comet( int cnum ) {
+  
   for( int i = 0; i < comet[cnum].length; i++ ) {
-    matrix.drawPixel( comet[cnum].body[i].x, comet[cnum].body[i].y, comet[cnum].body[i].c );
+    if( comet[cnum].body[i].x > -1 && comet[cnum].body[i].x < MATRIX_WIDTH && comet[cnum].body[i].y > -1 && comet[cnum].body[i].y < MATRIX_HEIGHT ) {
+      matrix.drawPixel( comet[cnum].body[i].x, comet[cnum].body[i].y, comet[cnum].body[i].c );
+    }
   }
 
   show_needed = true;
 }
 
 void clear_comet( int cnum ) {
+  
   for( int i = 0; i < comet[cnum].length; i++ ) {
-    matrix.drawPixel( comet[cnum].body[i].x, comet[cnum].body[i].y, 0 );
+    if( comet[cnum].body[i].x > -1 && comet[cnum].body[i].x < MATRIX_WIDTH && comet[cnum].body[i].y > -1 && comet[cnum].body[i].y < MATRIX_HEIGHT ) {
+      matrix.drawPixel( comet[cnum].body[i].x, comet[cnum].body[i].y, 0 );
+    }
   }
 
   if( comet[cnum].xdir ) {
@@ -313,7 +323,7 @@ void clear_comet( int cnum ) {
 
 void animate_comets() {
 
-  for( int cnum = 0; cnum < NUM_COMETS; cnum++ ) {
+  for( int cnum = 0; cnum < numComets; cnum++ ) {
 
     if( comet[cnum].next_update < cur_time ) {
   
@@ -329,6 +339,7 @@ void animate_comets() {
       
         clear_comet( cnum );
         gen_comet( cnum );
+        
       }
     }
   }   
@@ -339,9 +350,11 @@ void animate_comets() {
  * --------------------------------------------------------------------------------
  */
 
+int numLights = MAX_NUM_LIGHTS;
+
 bool light_used[MATRIX_WIDTH][MATRIX_HEIGHT];
 
-Light lights[NUM_LIGHTS];
+Light lights[MAX_NUM_LIGHTS];
 
 void init_light( uint8_t light_num ) {
   
@@ -374,7 +387,7 @@ void gen_all_lights() {
     }
   }
 
-  for( int i = 0; i < NUM_LIGHTS; i++ ) {
+  for( int i = 0; i < numLights; i++ ) {
     init_light( i );
   }
 }
@@ -415,7 +428,7 @@ bool flash_light( uint8_t light_num ) {
 void animate_lights() {
   boolean new_light = false;
   
-  for( int i = 0; i < NUM_LIGHTS; i++ ) {
+  for( int i = 0; i < numLights; i++ ) {
     
     if( lights[i].next_update <= cur_time ) {
       show_needed = true;
@@ -446,10 +459,12 @@ void animate_lights() {
 const uint16_t textColors[] = {
   matrix.Color(50, 0, 0), matrix.Color(0, 50, 0), matrix.Color(50, 50, 0),matrix.Color(0, 0, 50), matrix.Color(50, 0, 50), matrix.Color(0, 50, 50), matrix.Color(50, 50, 50)};
 
-String textMessage = "Fun Fun Fun!";
+String textMessage = "Happy Basscoast!";
+String displayText;
 
 int textLength;
 int textPos;
+int charPos;
 int textDir = 1;
 int textSpeed = 250;
 unsigned long nextTextUpdate;
@@ -458,8 +473,12 @@ int textColor;
 int textStartColor;
 
 void init_scrollingText() {
-  textLength = textMessage.length() * 6;
-  textPos =  MATRIX_WIDTH - textLength - (textLength / 2);
+
+  displayText = textMessage + " ";
+  
+  textLength = displayText.length() - 1;
+  textPos = 0;
+  charPos = 0;
   nextTextUpdate = cur_time + textSpeed;
   textColor = 0;
   textStartColor = 0;
@@ -468,26 +487,38 @@ void init_scrollingText() {
     textDir = 1;
   }
 
-  if( textSpeed < 10 || textSpeed > 1000 ){
+  if( textSpeed < MIN_SHOW_DELAY || textSpeed > 1000 ) {
     textSpeed = 100;
   }
 }
 
 void animate_scrollingText() {
-  int charPos, ch;
+  int curChar, ch;
   HsvColor color;
 
-  textPos += textDir;
-  
-  if( textPos > MATRIX_WIDTH - 6 ) {
-    textPos = 0;
+  charPos += textDir;
+
+  if( textDir == 1 ) {
+    if( charPos > 0 ) {
+      textPos--;
+      charPos = -CHAR_WIDTH + 1;
+    }
+
+    if( textPos < 0 ) {
+      textPos = textLength;
+    }
   }
 
-  if( textPos < 0 ) {
-    textPos = MATRIX_WIDTH - 6;
+  else {
+    if( charPos < 0 ) {
+      textPos++;
+      charPos = CHAR_WIDTH - 1;
+    }
+
+    if( textPos > textLength ) {
+      textPos = 0;
+    }
   }
-  
-  matrix.fillScreen( 0 );
 
   if( textColorMode == 0 ) {
     textColor = textStartColor;
@@ -499,20 +530,15 @@ void animate_scrollingText() {
     }
   }
 
-  for( ch = 0; ch < textMessage.length(); ch++ ) {
-    charPos = textPos + (ch * 6);
+  curChar = textPos;
+  
+  matrix.fillScreen( 0 );
 
-    if( charPos > MATRIX_WIDTH - 3 ) {
-      charPos = charPos - MATRIX_WIDTH;
-    }
-
-    else if( charPos < 0 ) {
-      charPos = MATRIX_WIDTH + charPos - 6;
-    }
+  for( ch = -1; ch < MATRIX_TEXT_WIDTH + 1; ch++ ) {
 
     switch( textColorMode ) {
       case 2:
-        if( textMessage.charAt( ch ) == 32 ) {
+        if( displayText.charAt( curChar ) == 32 ) {
           textColor = random( 6 );
         }
         
@@ -540,8 +566,14 @@ void animate_scrollingText() {
 
     }
     
-    matrix.setCursor( charPos , 0 );
-    matrix.print( textMessage.charAt( ch ));
+    matrix.setCursor( charPos + (ch * CHAR_WIDTH) , 0 );
+    matrix.print( displayText.charAt( curChar ));
+
+    curChar++;
+    
+    if( curChar > textLength ) {
+      curChar = 0;
+    }
   }
 
   show_needed = true;
@@ -562,78 +594,155 @@ IPAddress subnet(255,255,255,0);
 
 ESP8266WebServer server(80);
 
+static const String webhead = "\
+<html><head> \
+    <title>Rave Sign</title> \
+    <style> \
+      body { font-size: 30px; } \
+      input { font-size: 25px; } \
+      input[type=button], input[type=submit], input[type=reset] { \
+        border: solid; \
+        color: white; \
+        padding: 10px 20px; \
+        margin: 5px; \
+      } \
+      input[type=radio] { \
+        padding: 10px; \
+        margin: 5px; \
+        width: 30px; \
+        height: 30px; \
+      } \
+      .controls { \
+        width: 98%; \
+        border: 3px solid blue; \
+        margin: 5px; \
+      } \
+      .top { \
+        width: 100%; \
+        color: white; \
+        background: blue; \
+        display: inline-block; \
+        padding: 5px 0px; \
+      } \
+      .cntrl { \
+        width: 95%; \
+        padding: 5px; \
+        display: inline-block; \
+      } \
+      .left { \
+        width: 50%; \
+        padding: 2px 20px; \
+        float: left; \
+      } \
+      .right { \
+        width: auto; \
+        padding: 2px 10px; \
+        float: right; \
+      } \
+      .gobutton { \
+        background-color: #4CAF50; \
+      } \
+      .stopbutton { \
+        background-color: red; \
+      } \
+    </style></head><body>";
+
+String printTop() {
+
+  String retval =
+    "<form action='/submit' method='POST'> \
+     <div class='controls'> \
+     <div class='top'> \
+     <div class='left'><b>Rave Sign</b></div> \
+     <div class='right'><input class='" + String( enabled ? "stopbutton" : "gobutton" ) +
+      "' type='submit' name='enabled' value='" + String( enabled ? "Stop" : "Start" ) + "'></div></div>";
+
+  return retval;
+}
+
+String printSection( String title, int progNum ) {
+
+  String retval =
+    "<form action='/submit' method='POST'> \
+     <input type='hidden' name='programMode' value='" + String( progNum ) +"'> \
+     <div class='controls'> \
+     <div class='top'> \
+     <div class='left'><b>" + title + "<b></div> \
+     <div class='right'><input class='gobutton' type='submit' name='submit' value='Go!'></div></div>";
+
+  return retval;
+}
+
+String printControl( String title, String value ) {
+  
+  String retval =
+    "<div class='cntrl'> \
+     <div class='left'><b>" + title + "</b></div> \
+     <div class='right'>" + value + "</div></div>";
+
+  return retval;
+}
+
 void handleRoot() {
-  Serial.println( "handleRoot" );
-  
-  String content = "\
-    <html><body> \
-    <form action='/submit' method='POST'> \
-    <div style='border:1px dotted black;'> \
-    <h1>Show Stary Night</h1> \
-    <p><input type='submit' name='programMode' value='0'> \
-    </p></div></form> \
-    <form action='/submit' method='POST'> \
-    <div style='border:1px dotted black;'> \
-    <h1>Display Text</h1> \
-    <p><b>Message:</b> <input type='text' name='textMessage' value='" + textMessage + "'> \
-    <br /><b>Speed:</b> <input type='text' name='textSpeed' value='" + String( textSpeed ) + "'> \
-    <br /><b>Direction:</b> \
-    <input type='radio' name='textDir' value='-1'" + (textDir == -1 ? "checked" : "") + "> Clockwise | \
-    <input type='radio' name='textDir' value='1'" + (textDir == 1 ? "checked" : "") + "> Counterclockwise \
-    <br \><b>Color Mode:</b> \
-    <input type='radio' name='textColorMode' value='0'" + (textColorMode == 0 ? "checked" : "") + "> Rainbow | \
-    <input type='radio' name='textColorMode' value='1'" + (textColorMode == 1 ? "checked" : "") + "> Random | \
-    <input type='radio' name='textColorMode' value='2'" + (textColorMode == 2 ? "checked" : "") + "> Random Word \
-    <br \><input type='submit' name='programMode' value='1'> \
-    </p></div></form> \
-    </body></html>";
-  
+  Serial.println( "*** Running handleRoot" );
+
+  String content = webhead;
+
+    content += printTop();
+    content += printControl( "Uptime", String( cur_time ));
+    content += printControl( "Free Heap", String( ESP.getFreeHeap() ));
+    content += printControl( "Matrix Size", String( MATRIX_WIDTH ) + " X " + String( MATRIX_HEIGHT ));
+    content += "</div></form>";
+
+    content += printSection( "Stary Night", 1 );
+    content += printControl( "Number of Lights:", "<input type='text' name='numLights' value='" + String( numLights ) + "' size='5'>" );
+    content += printControl( "Number of Comets:", "<input type='text' name='numComets' value='" + String( numComets ) + "' size='5'>" );
+    content += "</div></form>";
+
+    content += printSection( "Scrolling Text", 2 );
+    content += printControl( "Message:", "<input type='text' name='textMessage' value='" + textMessage + "' size='20'>" );
+    content += printControl( "Speed:", "<input type='text' name='textSpeed' value='" + String( textSpeed ) + "' size='5'>" );
+    content += printControl( "Direction:", 
+      "<input type='radio' name='textDir' value='-1'" + String( textDir == -1 ? " checked" : "" ) + "> Clockwise<br /> \
+       <input type='radio' name='textDir' value='1'" + String( textDir == 1 ? " checked" : "" ) + "> Counterclockwise" );
+    content += printControl( "Color Mode:", 
+      "<input type='radio' name='textColorMode' value='0'" + String( textColorMode == 0 ? " checked" : "" ) + "> Rainbow<br /> \
+       <input type='radio' name='textColorMode' value='1'" + String( textColorMode == 1 ? " checked" : "" ) + "> Random<br /> \
+       <input type='radio' name='textColorMode' value='2'" + String( textColorMode == 2 ? " checked" : "" ) + "> Random Word" );
+    content += "</div></form></body></html>";
+    
   server.send( 200, "text/html", content );
 } 
 
 /* Handle submit */
 void handleSubmit() {
-  Serial.println( "handleSumbit" );
+  Serial.println( "*** Running: handleSumbit" );
 
-  matrix.fillScreen( 0 );
+  changed_mode = true;
 
   for( uint8_t i = 0; i < server.args(); i++ ) {
-    Serial.print( "Arg: " );
+    Serial.print( "   Arg: " );
     Serial.print( server.argName(i) );
     Serial.print( " : " );
     Serial.println( server.arg(i) );
   }
-
-  programMode = server.arg( "programMode" ).toInt();
-
-  if( programMode == 0 ) {
-    gen_all_comets();
-    gen_all_lights();
-  }
-
-  if( programMode == 1 ) {
-    textMessage = String( server.arg( "textMessage" ));
-    textSpeed = server.arg( "textSpeed" ).toInt();
-    textDir = server.arg( "textDir" ).toInt();
-    textColorMode = server.arg( "textColorMode" ).toInt();
-    init_scrollingText();
-  }
   
   String content = " \
     <html><head><meta http-equiv='refresh' content='5;url=http://" + local_IP.toString() + "/'></head><body> \
-    <p>Mode: " + String( programMode ) + "</p> \
-    <p>Message: " + textMessage + "</p> \
-    <p>Speed: " + String( textSpeed ) + "</p> \
-    <p>Dir: " + String( textDir ) + "</p> \
-    <p>ColorMode: " + String( textColorMode ) + "</p> \
-    </body></html>";
+    <h1>Request received</h1> \
+    <table style='border: 2px solid black;'><tr><th>Setting</th><th>Value</th></tr>";
 
+  for( uint8_t i = 0; i < server.args(); i++ ) {
+    content += "<tr><td>" + server.argName(i) + "</td><td>" + server.arg(i) + "</td></tr>";
+  }
+    
+  content += "</table></body></html>";
   server.send( 200, "text/html", content );
 }
 
 // 404 Error Handler
 void handleNotFound() {
-  Serial.println( "handleNotFound" );
+  Serial.println( "*** Running: handleNotFound" );
   
   String message = "404 Resource Not Found\n\n";
   
@@ -657,7 +766,7 @@ void handleNotFound() {
  * --------------------------------------------------------------------------------
  */
 
-int nextCheckWifi;
+unsigned long nextShowRam;
 
 void setup() {
   Serial.begin( 115200 );
@@ -694,7 +803,7 @@ void setup() {
 
   cur_time = millis();
   next_show = cur_time + MIN_SHOW_DELAY;
-  nextCheckWifi = cur_time + 1000;
+  nextShowRam = cur_time;
 
   init_scrollingText();
   gen_all_comets();
@@ -706,21 +815,63 @@ void setup() {
 void loop() {
   server.handleClient();
 
+  if( changed_mode ) {
+    
+    if( server.hasArg( "enabled" )) {
+      enabled = !enabled;
+    
+    } else if( server.hasArg( "programMode" ) ) {
+    
+      programMode = server.arg( "programMode" ).toInt();
+
+      if( programMode == 1 ) {
+        numLights = server.arg( "numLights" ).toInt();
+        numComets = server.arg( "numComets" ).toInt();
+
+        if( numLights > MAX_NUM_LIGHTS ) {
+          numLights = MAX_NUM_LIGHTS;
+        }
+
+        if( numComets > MAX_NUM_COMETS ) {
+          numComets = MAX_NUM_COMETS;
+        }
+      
+        gen_all_comets();
+        gen_all_lights();
+      }
+
+      if( programMode == 2 ) {
+        textMessage = String( server.arg( "textMessage" ));
+        textSpeed = server.arg( "textSpeed" ).toInt();
+        textDir = server.arg( "textDir" ).toInt();
+        textColorMode = server.arg( "textColorMode" ).toInt();
+        init_scrollingText();
+      }
+    }
+
+    matrix.fillScreen( 0 );
+
+    show_needed = true;
+    changed_mode = false;
+  }
+ 
   cur_time = millis();
 
-/*  if( cur_time > nextCheckWifi ) {
-    nextCheckWifi = cur_time + 1000;
-    Serial.printf("Stations connected = %d\n", WiFi.softAPgetStationNum());  
-  } */
+  if( cur_time > nextShowRam ) {
+    Serial.printf( "At %u Free Memory: ", cur_time );
+    Serial.print( ESP.getFreeHeap() );
+    Serial.printf("  Stations connected: %d\n", WiFi.softAPgetStationNum());
+    nextShowRam += 2000;
+  }
 
-  if( programMode == 0 ) {
+  if( enabled && programMode == 1 ) {
     if( cur_time > nextCometUpdate ) {
       nextCometUpdate = cur_time + MIN_SHOW_DELAY;
       animate_comets();
       animate_lights();
     }
 
-  } else {
+  } else if( enabled && programMode == 2 ) {
     if( cur_time > nextTextUpdate ) {
       nextTextUpdate = cur_time + textSpeed;
       animate_scrollingText();
