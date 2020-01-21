@@ -17,21 +17,21 @@
 
 #define MAX_BRIGHT 0.2
 
-#define MIN_SHOW_DELAY 50
+#define MIN_SHOW_DELAY 10
 
 #define MIN_COMET_LENGTH 4
 #define MAX_COMET_LENGTH 8
-#define MIN_COMET_DELAY 50
+#define MIN_COMET_DELAY 10
 #define MAX_COMET_DELAY 100
 #define MAX_NUM_COMETS 10
 
 #define MAX_NUM_LIGHTS 50
-#define MIN_UPDATE_DELAY 50
+#define MIN_UPDATE_DELAY 10
 #define MAX_UPDATE_DELAY 100
 #define FLASH_UPDATE_DELAY 100
 
-#define APSSID "ESPap"
-#define APPSK  "thereisnospoon"
+#define STASSID "YourWifiSSID"
+#define STAPSK  "YourPSK"
 
 typedef struct HsvColor {
     double h;       // angle in degrees
@@ -179,6 +179,7 @@ Comet comet[MAX_NUM_COMETS];
 
 boolean row_used[MATRIX_HEIGHT];
 boolean col_used[MATRIX_WIDTH];
+boolean light_used[MATRIX_WIDTH][MATRIX_HEIGHT];
 
 void init_comet( int cnum, double hue, int xstart, int ystart, int xdir, int ydir, int length, int delay ) {
 
@@ -299,7 +300,8 @@ void move_comet( int cnum ) {
 void draw_comet( int cnum ) {
   
   for( int i = 0; i < comet[cnum].length; i++ ) {
-    if( comet[cnum].body[i].x > -1 && comet[cnum].body[i].x < MATRIX_WIDTH && comet[cnum].body[i].y > -1 && comet[cnum].body[i].y < MATRIX_HEIGHT ) {
+    if( comet[cnum].body[i].x > -1 && comet[cnum].body[i].x < MATRIX_WIDTH && comet[cnum].body[i].y > -1 && comet[cnum].body[i].y < MATRIX_HEIGHT
+      && !light_used[comet[cnum].body[i].x][comet[cnum].body[i].y] ) {
       matrix.drawPixel( comet[cnum].body[i].x, comet[cnum].body[i].y, comet[cnum].body[i].c );
     }
   }
@@ -354,8 +356,6 @@ void animate_comets() {
  */
 
 int numLights = MAX_NUM_LIGHTS;
-
-bool light_used[MATRIX_WIDTH][MATRIX_HEIGHT];
 
 Light lights[MAX_NUM_LIGHTS];
 
@@ -491,7 +491,7 @@ void init_scrollingText() {
   }
 
   if( textSpeed < MIN_SHOW_DELAY || textSpeed > 1000 ) {
-    textSpeed = 100;
+    textSpeed = 250;
   }
 }
 
@@ -587,14 +587,7 @@ void animate_scrollingText() {
  * --------------------------------------------------------------------------------
  */
 
-/* Create web interface. Go to http://192.168.4.2 in a web browser
-   connected to this access point to see it.
-*/
-
-IPAddress local_IP(192,168,4,2);
-IPAddress gateway(192,168,4,1);
-IPAddress subnet(255,255,255,0);
-
+String IPAddr;
 ESP8266WebServer server(80);
 
 const String webhead = "\
@@ -733,7 +726,7 @@ void handleSubmit() {
   }
   
   webContent = " \
-    <html><head><meta http-equiv='refresh' content='5;url=http://" + local_IP.toString() + "/'></head><body> \
+    <html><head><meta http-equiv='refresh' content='5;url=http://" + IPAddr + "/'></head><body> \
     <h1>Request received</h1> \
     <table style='border: 2px solid black;'><tr><th>Setting</th><th>Value</th></tr>";
 
@@ -781,16 +774,24 @@ void setup() {
 
   randomSeed( analogRead( 0 ));
 
-  Serial.print( "Setting soft-AP configuration ... " );
-  WiFi.scanNetworks( false );
-  WiFi.mode( WIFI_AP );
-  Serial.println( WiFi.softAPConfig( local_IP, gateway, subnet ) ? "Started" : "FAILED!");
+  Serial.println();
+  Serial.print( "Setting up Wifi ... " );
+  WiFi.mode( WIFI_STA );
+  WiFi.begin( STASSID, STAPSK );
 
-  Serial.print( "Starting soft-AP ... " );
-  Serial.println( WiFi.softAP( APSSID, APPSK ) ? "Started" : "FAILED!");
+  // Wait for connection
+  while( WiFi.status() != WL_CONNECTED ) {
+    delay( 500 );
+    Serial.print( "." );
+  }
 
-  Serial.print( "Soft-AP IP address : " );
-  Serial.println( WiFi.softAPIP() );
+  IPAddr = WiFi.localIP().toString();
+
+  Serial.println();
+  Serial.print( "Connected to " );
+  Serial.println( STASSID );
+  Serial.print( "IP address: " );
+  Serial.println( IPAddr );
   
   // Setup Server
   server.on( "/", handleRoot );
@@ -821,9 +822,7 @@ void setup() {
 
 void loop() {
 
-  if( server.hasClient() ) {
-    server.handleClient();
-  }
+  server.handleClient();
 
   if( changed_mode ) {
     
@@ -868,11 +867,8 @@ void loop() {
   cur_time = millis();
 
   if( cur_time > nextShowRam ) {
-    Serial.printf( "At %u Free Memory: ", cur_time );
-    Serial.print( ESP.getFreeHeap() );
-    Serial.printf("  Stations connected: %d\n", WiFi.softAPgetStationNum() );
-    Serial.print( "  Wifi Status: " );
-    Serial.println( WiFi.status() );
+    Serial.printf( "At %lu Free Memory: %i Heap Fragmentation: %i Max Free Block Size: %i Stations connected: %i Wifi Stats: %i\n",
+      cur_time, ESP.getFreeHeap(), ESP.getHeapFragmentation(), ESP.getMaxFreeBlockSize(), WiFi.softAPgetStationNum(), WiFi.status() );
     nextShowRam += 2000;
   }
 
