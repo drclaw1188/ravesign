@@ -30,8 +30,8 @@
 #define MAX_UPDATE_DELAY 100
 #define FLASH_UPDATE_DELAY 100
 
-#define STASSID "YourWifiSSID"
-#define STAPSK  "YourPSK"
+#define STASSID "YOURSSID"
+#define STAPSK  "YOURPSK"
 
 typedef struct HsvColor {
     double h;       // angle in degrees

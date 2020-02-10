@@ -6,7 +6,7 @@
 #include <Adafruit_NeoMatrix.h>
 
 #define PIN 3
-#define MATRIX_WIDTH 96
+#define MATRIX_WIDTH 64
 #define MATRIX_HEIGHT 8
 
 #define CHAR_WIDTH 6
@@ -29,9 +29,6 @@
 #define MIN_UPDATE_DELAY 50
 #define MAX_UPDATE_DELAY 100
 #define FLASH_UPDATE_DELAY 100
-
-#define APSSID "ESPap"
-#define APPSK  "thereisnospoon"
 
 typedef struct HsvColor {
     double h;       // angle in degrees
@@ -92,7 +89,7 @@ Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix( MATRIX_WIDTH, MATRIX_HEIGHT, PIN
  * --------------------------------------------------------------------------------
  */
 
-boolean enabled = false;
+boolean enabled = true;
 boolean show_needed = false;
 boolean changed_mode = false;
 unsigned long cur_time = 0;
@@ -179,6 +176,7 @@ Comet comet[MAX_NUM_COMETS];
 
 boolean row_used[MATRIX_HEIGHT];
 boolean col_used[MATRIX_WIDTH];
+boolean light_used[MATRIX_WIDTH][MATRIX_HEIGHT];
 
 void init_comet( int cnum, double hue, int xstart, int ystart, int xdir, int ydir, int length, int delay ) {
 
@@ -299,7 +297,8 @@ void move_comet( int cnum ) {
 void draw_comet( int cnum ) {
   
   for( int i = 0; i < comet[cnum].length; i++ ) {
-    if( comet[cnum].body[i].x > -1 && comet[cnum].body[i].x < MATRIX_WIDTH && comet[cnum].body[i].y > -1 && comet[cnum].body[i].y < MATRIX_HEIGHT ) {
+    if( comet[cnum].body[i].x > -1 && comet[cnum].body[i].x < MATRIX_WIDTH && comet[cnum].body[i].y > -1 && comet[cnum].body[i].y < MATRIX_HEIGHT
+      && !light_used[comet[cnum].body[i].x][comet[cnum].body[i].y] ) {
       matrix.drawPixel( comet[cnum].body[i].x, comet[cnum].body[i].y, comet[cnum].body[i].c );
     }
   }
@@ -354,8 +353,6 @@ void animate_comets() {
  */
 
 int numLights = MAX_NUM_LIGHTS;
-
-bool light_used[MATRIX_WIDTH][MATRIX_HEIGHT];
 
 Light lights[MAX_NUM_LIGHTS];
 
@@ -591,6 +588,9 @@ void animate_scrollingText() {
    connected to this access point to see it.
 */
 
+const char* WifiSSID = "ESPap";
+const char* WifiPSK = "thereisnospoon";
+
 IPAddress local_IP(192,168,4,2);
 IPAddress gateway(192,168,4,1);
 IPAddress subnet(255,255,255,0);
@@ -774,6 +774,7 @@ void handleNotFound() {
  */
 
 unsigned long nextShowRam;
+unsigned long nextHandleClient;
 
 void setup() {
   Serial.begin( 115200 );
@@ -787,7 +788,7 @@ void setup() {
   Serial.println( WiFi.softAPConfig( local_IP, gateway, subnet ) ? "Started" : "FAILED!");
 
   Serial.print( "Starting soft-AP ... " );
-  Serial.println( WiFi.softAP( APSSID, APPSK ) ? "Started" : "FAILED!");
+  Serial.println( WiFi.softAP( WifiSSID ) ? "Started" : "FAILED!");
 
   Serial.print( "Soft-AP IP address : " );
   Serial.println( WiFi.softAPIP() );
@@ -809,6 +810,7 @@ void setup() {
   cur_time = millis();
   next_show = cur_time + MIN_SHOW_DELAY;
   nextShowRam = cur_time;
+  nextHandleClient = cur_time;
 
   textMessage.reserve( MAX_MESSAGE_LENGTH );
   displayText.reserve( MAX_MESSAGE_LENGTH );
@@ -821,8 +823,17 @@ void setup() {
 
 void loop() {
 
-  if( server.hasClient() ) {
+  cur_time = millis();
+
+  if( show_needed && cur_time > next_show ) {
+    matrix.show();
+    show_needed = false;
+    next_show = cur_time + MIN_SHOW_DELAY;
+    return;
+  } else if( cur_time > nextHandleClient ) {
     server.handleClient();
+    nextHandleClient = cur_time + 100;
+    return;
   }
 
   if( changed_mode ) {
@@ -864,15 +875,10 @@ void loop() {
     show_needed = true;
     changed_mode = false;
   }
- 
-  cur_time = millis();
 
   if( cur_time > nextShowRam ) {
-    Serial.printf( "At %u Free Memory: ", cur_time );
-    Serial.print( ESP.getFreeHeap() );
-    Serial.printf("  Stations connected: %d\n", WiFi.softAPgetStationNum() );
-    Serial.print( "  Wifi Status: " );
-    Serial.println( WiFi.status() );
+    Serial.printf( "At %lu Free Memory: %i Heap Fragmentation: %i Max Free Block Size: %i Stations connected: %i Wifi Stats: %i\n",
+      cur_time, ESP.getFreeHeap(), ESP.getHeapFragmentation(), ESP.getMaxFreeBlockSize(), WiFi.softAPgetStationNum(), WiFi.status() );
     nextShowRam += 2000;
   }
 
@@ -889,11 +895,4 @@ void loop() {
       animate_scrollingText();
     }
   }
-
-  if( show_needed && cur_time > next_show ) {
-    matrix.show();
-    show_needed = false;
-    next_show = cur_time + MIN_SHOW_DELAY;
-  }
-
 }
